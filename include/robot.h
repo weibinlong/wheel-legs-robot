@@ -24,6 +24,7 @@
 
 #include <WiFi.h>
 #include <ArduinoJson.h>
+#include <WebSocketsServer.h>
 
 typedef struct
 {
@@ -51,6 +52,7 @@ typedef enum
   LEFT,
   STOP,
   JUMP,
+  SWAY,
 } QR_State_t;
 
 // 机器人模式枚举类型

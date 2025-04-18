@@ -6,6 +6,12 @@
 // 转成PlatformIO工程创建
 #include "main.h"
 
+// 定义全局变量
+TwoWire I2Cone = TwoWire(0);
+TwoWire I2Ctwo = TwoWire(1);
+MPU6050 mpu6050(I2Ctwo);
+RobotProtocol rp(20);
+
 /************实例定义*************/
 
 // 电机实例
@@ -15,8 +21,6 @@ BLDCDriver3PWM driver1 = BLDCDriver3PWM(32, 33, 25, 22);
 BLDCDriver3PWM driver2 = BLDCDriver3PWM(26, 27, 14, 12);
 
 // 编码器实例
-TwoWire I2Cone = TwoWire(0);
-TwoWire I2Ctwo = TwoWire(1);
 MagneticSensorI2C sensor1 = MagneticSensorI2C(AS5600_I2C);
 MagneticSensorI2C sensor2 = MagneticSensorI2C(AS5600_I2C);
 
@@ -57,16 +61,11 @@ void lpfRoll(char *cmd) { command.lpf(&lpf_roll, cmd); }
 // WebServer实例
 WebServer webserver;                               // server服务器
 WebSocketsServer websocket = WebSocketsServer(81); // 定义一个webSocket服务器来处理客户发送的消息
-RobotProtocol rp(20);
-int joystick_value[2];
 
 // STS舵机实例
 SMS_STS sms_sts;
 
-// MPU6050实例
-MPU6050 mpu6050(I2Ctwo);
-
-/************参数定义*************/
+// 参数定义
 #define pi 3.1415927
 
 // LQR自平衡控制器参数
@@ -104,6 +103,12 @@ int jump_flag = 0;             // 跳跃时段标识
 float leg_position_add = 0;    // roll轴平衡控制量
 int uncontrolable = 0;         // 机身倾角过大导致失控
 
+// 定义摇摆相关变量
+int sway_flag = 0;
+int sway_count = 0;
+int sway_direction = 1;
+int sway_cycle = 0;
+unsigned long sway_timer = 0;
 
 // 电压检测
 uint16_t bat_check_num = 0;
@@ -230,7 +235,8 @@ void loop()
   mpu6050.update();   // IMU数据更新
   lqr_balance_loop(); // lqr自平衡控制，更新LQR_u
   yaw_loop();         // yaw轴转向控制，更新YAW_output
-  leg_loop();         // 腿部动作控制，控制舵机SyncWritePosEx，包括判断jump_loop
+  sway_loop();        // 摇摆模式控制
+  leg_loop();         // 腿部动作控制
 
   // 将自平衡计算输出转矩赋给电机
   motor1.target = (-0.5) * (LQR_u + YAW_output);
@@ -405,74 +411,86 @@ void lqr_balance_loop()
 }
 
 // 腿部动作控制（舵机）
-void leg_loop()
-{
-  jump_loop();
-  if (jump_flag == 0) // 不处于跳跃状态
-  {
-    // 舵机加速度
-    ACC[0] = 8;
-    ACC[1] = 8;
+void leg_loop() {
+    jump_loop();  // 首先调用jump_loop
+    
+    // 不处于跳跃状态时才执行
+    if (jump_flag == 0) {
+        // 基础变量声明
+        int left_height, right_height;
+        float RollOffset = 25;  // 增加基础高度偏移（原来是18）
+        
+        // 舵机基础参数设置
+        ACC[0] = 8;
+        ACC[1] = 8;
+        Speed[0] = 200;
+        Speed[1] = 200;
 
-    // 舵机速度
-    Speed[0] = 200;
-    Speed[1] = 200;
-    float roll_angle = (float)mpu6050.getAngleX() + 2.0;
-    leg_position_add = pid_roll_angle(lpf_roll(roll_angle)); // test
+        // 获取roll角度和角速度
+        float roll_angle = (float)mpu6050.getAngleX() + 2.0;
+        float roll_velocity = (float)mpu6050.getGyroX();
+        leg_position_add = pid_roll_angle(lpf_roll(roll_angle));
 
-    int roll_offset = wrobot.roll;
-    int left_height, right_height;
+        // 获取roll偏移量
+        int roll_offset = wrobot.roll;
+        
+        // 计算高度调整
+        float angleRad = abs(roll_offset) * (pi / 180.0);
+        float height_factor = 1.0;  // 默认高度因子
+        
+        // 根据roll_offset大小调整高度因子
+        if (abs(roll_offset) > 20) {
+            height_factor = 1.2;  // 大角度时增加效果
+        }
+        
+        // 计算高度调整量
+        float heightAdjust = 45 * height_factor * sin(angleRad);  // 基础45mm高度差
+        
+        // 添加动态补偿
+        float dynamic_compensation = 0;
+        if (abs(roll_velocity) > 5.0) {
+            dynamic_compensation = roll_velocity * 0.5;
+        }
 
-    // 新增转弯逻辑
-    if (wrobot.joyx > 10) { // 向右转弯
-      left_height = wrobot.height + wrobot.joyx*0.1;  // 左腿抬高
-      right_height = wrobot.height;
-    } else if (wrobot.joyx < -10) { // 向左转弯
-      left_height = wrobot.height;
-      right_height = wrobot.height - wrobot.joyx*0.1;   // 右腿抬高
-    } else { // 正常情况
+        // 根据roll_offset计算左右腿高度
+        if (roll_offset > 10) {
+            // 向右倾斜
+            left_height = wrobot.height + RollOffset + heightAdjust + dynamic_compensation;
+            right_height = wrobot.height + RollOffset - heightAdjust - dynamic_compensation;
+            leg_position_add = 0;
+        } else if (roll_offset < -10) {
+            // 向左倾斜
+            left_height = wrobot.height + RollOffset - heightAdjust + dynamic_compensation;
+            right_height = wrobot.height + RollOffset + heightAdjust - dynamic_compensation;
+            leg_position_add = 0;
+        } else {
+            // 保持平衡
+            left_height = wrobot.height;
+            right_height = wrobot.height;
+        }
 
-      // 如果控制了 roll 角度，则调整左右脚的高度
-      // 计算三角函数值
-      float angleRad = abs(roll_offset) * (pi / 180.0); // 将角度转换为弧度
-      float heightAdjust = 30 * sin(angleRad); // 小车宽度的一半是30毫米，抬高的高度是30毫米*sin(弧度)
-      float RollOffset = 18; // 所以水平高度需要加上调整高度，否则线下倾斜无法向下了
-      if (roll_offset > 10) {
-        // 正数，左脚高度 60，右脚高度 40
-        // 因为车身高度最小32，所以水平高度需要加上调整高度15，否则线下倾斜无法向下了
-        left_height = wrobot.height + RollOffset + heightAdjust;
-        right_height = wrobot.height + RollOffset - heightAdjust;
-        leg_position_add = 0;
-      } else if (roll_offset < -10) {
-        // 负数，左脚高度 40，右脚高度 60
-        left_height = wrobot.height + RollOffset - heightAdjust;
-        right_height = wrobot.height + RollOffset + heightAdjust;
-        leg_position_add = 0;
-      } else { // 未控制 roll 角度
-        // roll 为 0，左右恢复到同一高度
-        left_height = wrobot.height;
-        right_height = wrobot.height;
-      }
+        // 安全限制：最大高度差
+        float max_height_diff = 60;
+        if (abs(left_height - right_height) > max_height_diff) {
+            float scale = max_height_diff / abs(left_height - right_height);
+            float height_diff = (left_height - right_height) * scale;
+            left_height = wrobot.height + height_diff/2;
+            right_height = wrobot.height - height_diff/2;
+        }
+
+        // 计算舵机位置
+        Position[0] = 2048 + 12 + 9.5 * (left_height - 32) - leg_position_add;
+        Position[1] = 2048 - 12 - 9.5 * (right_height - 32) - leg_position_add;
+
+        // 舵机位置限制
+        if (Position[0] < 2090) Position[0] = 2090;
+        else if (Position[0] > 2530) Position[0] = 2530;
+        if (Position[1] < 1566) Position[1] = 1566;
+        else if (Position[1] > 2006) Position[1] = 2006;
+
+        // 执行舵机控制
+        sms_sts.SyncWritePosEx(ID, 2, Position, Speed, ACC);
     }
-
-    // 根据新的高度计算舵机位置
-    // 左 = 0，右 = 1
-    // 2048是舵机中间位置，12是微调偏移量，8,4是系数，32是默认高度，最高80，最低32
-    Position[0] = 2048 + 12 + 8.4 * (left_height - 32) - leg_position_add; 
-    Position[1] = 2048 - 12 - 8.4 * (right_height - 32) - leg_position_add;
-
-    // 限制舵机位置范围
-    if (Position[0] < 2110)
-      Position[0] = 2110;
-    else if (Position[0] > 2510)
-      Position[0] = 2510;
-    if (Position[1] < 1586)
-      Position[1] = 1586;
-    else if (Position[1] > 1986)
-      Position[1] = 1986;
-
-    sms_sts.SyncWritePosEx(ID, 2, Position, Speed, ACC);
-  }
 }
 
 // 跳跃控制
@@ -635,4 +653,60 @@ void bat_check()
   }
   else
     bat_check_num++;
+}
+
+// 摇摆模式控制函数
+void sway_loop()
+{
+    // 检测按钮触发条件：从其他状态切换到SWAY状态
+    if ((wrobot.dir_last != 6) && (wrobot.dir == 6) && (sway_flag == 0))
+    {
+        // 初始化摇摆参数
+        sway_flag = 1;
+        sway_count = 0;
+        sway_cycle = 0;
+        sway_direction = 1;
+        sway_timer = millis();
+        
+        // 设置舵机参数
+        ACC[0] = 8;
+        ACC[1] = 8;
+        Speed[0] = 200;
+        Speed[1] = 200;
+    }
+
+    // 执行摇摆动作
+    if (sway_flag > 0)
+    {
+        unsigned long current_time = millis();
+        
+        // 每500ms切换一次方向
+        if (current_time - sway_timer >= 500)
+        {
+            sway_direction = -sway_direction;
+            sway_count++;
+            sway_timer = current_time;
+            
+            // 每完成4次方向切换（左右各2次）算一个完整周期
+            if (sway_count % 4 == 0)
+            {
+                sway_cycle++;
+                
+                // 完成5个完整周期（共20次摇摆）后停止
+                if (sway_cycle >= 5)
+                {
+                    // 重置所有标志和状态
+                    sway_flag = 0;
+                    sway_count = 0;
+                    sway_cycle = 0;
+                    wrobot.roll = 0;    // 恢复平衡位置
+                    wrobot.dir = STOP;  // 切换到停止状态
+                    return;
+                }
+            }
+        }
+        
+        // 设置摇摆角度
+        wrobot.roll = sway_direction * 25;  // 左右25度摇摆
+    }
 }

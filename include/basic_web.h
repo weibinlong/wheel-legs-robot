@@ -63,6 +63,7 @@ const char basic_web[] PROGMEM = R"=====(
         
         <div class="buttons">
             <button class="dir" id="jump">Jump</button>
+            <button class="dir" id="sway">Sway</button>
         </div>
     </center>
     

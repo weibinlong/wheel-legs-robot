@@ -21,8 +21,10 @@
 // -----------------------------------------------------------------------------
 
 #include "robot.h"
+#include <WebSocketsServer.h>  // 添加这个头文件以解决WStype_t未定义的问题
 
 Wrobot wrobot;
+
 RobotProtocol::RobotProtocol(uint8_t len)
 {
     _len = len;
@@ -97,7 +99,6 @@ int RobotProtocol::checkBufRefresh(void)
 
 void RobotProtocol::parseBasic(StaticJsonDocument<300> &doc)
 {
-
     _now_buf[2] = BASIC;
 
     String dir = doc["dir"];
@@ -113,26 +114,11 @@ void RobotProtocol::parseBasic(StaticJsonDocument<300> &doc)
             _now_buf[3] = JUMP;
             wrobot.dir = JUMP;
         }
-        // else if (dir == "forward")
-        // {
-        //     _now_buf[3] = FORWARD;
-        //     wrobot.dir = FORWARD;
-        // }
-        // else if (dir == "back")
-        // {
-        //     _now_buf[3] = BACK;
-        //     wrobot.dir = BACK;
-        // }
-        // else if (dir == "left")
-        // {
-        //     _now_buf[3] = LEFT;
-        //     wrobot.dir = LEFT;
-        // }
-        // else if (dir == "right")
-        // {
-        //     _now_buf[3] = RIGHT;
-        //     wrobot.dir = RIGHT;
-        // }
+        else if (dir == "sway")
+        {
+            _now_buf[3] = SWAY;
+            wrobot.dir = SWAY;
+        }
         else
         {
             _now_buf[3] = STOP;

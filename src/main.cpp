@@ -658,7 +658,6 @@ void bat_check()
 // 摇摆模式控制函数
 void sway_loop()
 {
-    // 检测按钮触发条件：从其他状态切换到SWAY状态
     if ((wrobot.dir_last != 6) && (wrobot.dir == 6) && (sway_flag == 0))
     {
         // 初始化摇摆参数
@@ -668,31 +667,28 @@ void sway_loop()
         sway_direction = 1;
         sway_timer = millis();
         
-        // 设置舵机参数
-        ACC[0] = 8;
-        ACC[1] = 8;
-        Speed[0] = 200;
-        Speed[1] = 200;
+        // 设置舵机参数 - 调整速度和加速度以获得更好的效果
+        ACC[0] = 12;      // 增加加速度（原来是8）
+        ACC[1] = 12;
+        Speed[0] = 300;   // 增加速度（原来是200）
+        Speed[1] = 300;
     }
 
-    // 执行摇摆动作
     if (sway_flag > 0)
     {
         unsigned long current_time = millis();
         
-        // 每500ms切换一次方向
-        if (current_time - sway_timer >= 500)
+        // 增加摇摆周期到800ms（原来是500ms），使动作更流畅
+        if (current_time - sway_timer >= 800)
         {
             sway_direction = -sway_direction;
             sway_count++;
             sway_timer = current_time;
             
-            // 每完成4次方向切换（左右各2次）算一个完整周期
             if (sway_count % 4 == 0)
             {
                 sway_cycle++;
                 
-                // 完成5个完整周期（共20次摇摆）后停止
                 if (sway_cycle >= 5)
                 {
                     // 重置所有标志和状态
@@ -700,13 +696,22 @@ void sway_loop()
                     sway_count = 0;
                     sway_cycle = 0;
                     wrobot.roll = 0;    // 恢复平衡位置
-                    wrobot.dir = STOP;  // 切换到停止状态
+                    wrobot.dir = 4;     // 切换到STOP状态
                     return;
                 }
             }
         }
         
+        // 增加摇摆幅度并添加渐变效果
+        float target_angle = sway_direction * 45;  // 增加到45度（原来是35度）
+        
+        // 计算当前周期内的时间比例（0到1之间）
+        float time_ratio = (float)(current_time - sway_timer) / 800.0f;
+        
+        // 使用正弦函数使动作更平滑
+        float smooth_angle = target_angle * sin(time_ratio * PI);
+        
         // 设置摇摆角度
-        wrobot.roll = sway_direction * 25;  // 左右25度摇摆
+        wrobot.roll = (int)smooth_angle;
     }
 }

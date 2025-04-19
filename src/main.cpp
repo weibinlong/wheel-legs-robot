@@ -526,6 +526,7 @@ void jump_loop()
     if (jump_flag > 200)
     {
       jump_flag = 0; // 跳跃过程结束
+      wrobot.height = 38;  // 恢复默认高度值
     }
   }
 }
@@ -658,60 +659,83 @@ void bat_check()
 // 摇摆模式控制函数
 void sway_loop()
 {
+    // Check button trigger condition: state changes from other to SWAY
     if ((wrobot.dir_last != 6) && (wrobot.dir == 6) && (sway_flag == 0))
     {
-        // 初始化摇摆参数
+        // Initialize sway parameters
         sway_flag = 1;
         sway_count = 0;
         sway_cycle = 0;
         sway_direction = 1;
         sway_timer = millis();
         
-        // 设置舵机参数 - 调整速度和加速度以获得更好的效果
-        ACC[0] = 12;      // 增加加速度（原来是8）
-        ACC[1] = 12;
-        Speed[0] = 300;   // 增加速度（原来是200）
-        Speed[1] = 300;
+        // Set servo parameters
+        ACC[0] = 10;       // Moderate acceleration to reduce impact
+        ACC[1] = 10;
+        Speed[0] = 250;    // Moderate speed for stability
+        Speed[1] = 250;
+
+        // Set initial height to default
+        wrobot.height = 38;  // Use default height for stability
     }
 
+    // Execute sway motion
     if (sway_flag > 0)
     {
         unsigned long current_time = millis();
         
-        // 增加摇摆周期到800ms（原来是500ms），使动作更流畅
-        if (current_time - sway_timer >= 800)
+        // Switch direction every 1200ms to allow time for large amplitude motion
+        if (current_time - sway_timer >= 1200)
         {
             sway_direction = -sway_direction;
             sway_count++;
             sway_timer = current_time;
             
+            // Complete one full cycle after 4 direction changes (2 left and 2 right)
             if (sway_count % 4 == 0)
             {
                 sway_cycle++;
                 
+                // Stop after 5 complete cycles (20 total sways)
                 if (sway_cycle >= 5)
                 {
-                    // 重置所有标志和状态
+                    // Reset all flags and states
                     sway_flag = 0;
                     sway_count = 0;
                     sway_cycle = 0;
-                    wrobot.roll = 0;    // 恢复平衡位置
-                    wrobot.dir = 4;     // 切换到STOP状态
+                    wrobot.roll = 0;     // Restore balance position
+                    wrobot.height = 38;   // Restore default height
+                    wrobot.dir = 4;       // Switch to STOP state
                     return;
                 }
             }
         }
         
-        // 增加摇摆幅度并添加渐变效果
-        float target_angle = sway_direction * 45;  // 增加到45度（原来是35度）
+        // Calculate sway angle and height adjustment
+        float time_ratio = (float)(current_time - sway_timer) / 1200.0f;
+        float phase = time_ratio * PI;
         
-        // 计算当前周期内的时间比例（0到1之间）
-        float time_ratio = (float)(current_time - sway_timer) / 800.0f;
-        
-        // 使用正弦函数使动作更平滑
-        float smooth_angle = target_angle * sin(time_ratio * PI);
-        
-        // 设置摇摆角度
+        // Set sway angle (45 degrees)
+        float target_angle = sway_direction * 45;
+        float smooth_angle = target_angle * sin(phase);
         wrobot.roll = (int)smooth_angle;
+
+        // Height adjustment logic
+        // Use smaller height range and ensure safety height
+        const int BASE_HEIGHT = 38;      // Base height
+        const int MIN_HEIGHT = 32;       // Minimum safe height
+        const int HEIGHT_RANGE = 6;      // Height variation range (±3mm)
+        
+        // Calculate height adjustment using cosine function, range from -3 to +3
+        float height_adjust = (HEIGHT_RANGE/2) * cos(phase);
+        
+        // Calculate new height, ensuring it doesn't go below minimum safe height
+        int new_height = BASE_HEIGHT + (int)height_adjust;
+        if (new_height < MIN_HEIGHT) {
+            new_height = MIN_HEIGHT;
+        }
+        
+        // Apply new height
+        wrobot.height = new_height;
     }
 }

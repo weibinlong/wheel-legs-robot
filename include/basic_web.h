@@ -55,7 +55,7 @@ const char basic_web[] PROGMEM = R"=====(
                 <div id="joy2Info">
                     <span>Roll: <span id="joy2XValue">0</span></span>
                     <br>
-                    <span>Height: <span id="joy2YValue">32</span></span>
+                    <span>Height: <span id="joy2YValue">38</span></span>
                 </div>
             </div>
         </div>

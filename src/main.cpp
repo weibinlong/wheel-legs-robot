@@ -5,7 +5,8 @@
 
 // 转成PlatformIO工程创建
 #include "main.h"
-
+#include <HardwareSerial.h>// 在文件头部添加
+#include "ai_control.h"// 在文件头部添加 
 // 定义全局变量
 TwoWire I2Cone = TwoWire(0);
 TwoWire I2Ctwo = TwoWire(1);
@@ -42,6 +43,8 @@ LowPassFilter lpf_roll(0.3);
 
 // commander通信实例
 Commander command = Commander(Serial);
+// 在全局变量区域添加函数声明（大约在文件第30行左右）
+void handleAICommands();
 
 void StabAngle(char *cmd) { command.pid(&pid_angle, cmd); }
 void StabGyro(char *cmd) { command.pid(&pid_gyro, cmd); }
@@ -78,7 +81,7 @@ float gyro_control = 0;
 float speed_control = 0;
 float distance_control = 0;
 float LQR_u = 0;
-float angle_zeropoint = 1.79;  // 3.4 在理想平衡状态下俯仰角度，向前到正，向后倒负
+float angle_zeropoint = 1.79;      // 3.4 在理想平衡状态下俯仰角度，向前到正，向后倒负
 float distance_zeropoint = -256.0; // 轮部位移零点偏置（-256为一个不可能的位移值，将其作为未刷新的标志）
 
 // YAW轴控制数据
@@ -224,14 +227,16 @@ void setup()
   command.add('L', lpfRoll, "lpf roll");
 
   // command.add('M', Stabtest_zeropoint, "test_zeropoint");
-
   delay(500);
 }
 
 void loop()
+// 删除setup()中的aiControlInit调用
+// 在loop()中调整调用顺序：
 {
   bat_check();        // 电压检测
   web_loop();         // Web数据更新
+  handleAICommands(); // 添加在web_loop()之后，用于处理AI命令 必须先于command.run()
   mpu6050.update();   // IMU数据更新
   lqr_balance_loop(); // lqr自平衡控制，更新LQR_u
   yaw_loop();         // yaw轴转向控制，更新YAW_output
@@ -261,7 +266,8 @@ void loop()
 
   // wrobot.go=0 未开启，1开启，如果没有开启 ，或没有被扶起，则关停输出
   // if (wrobot.go == 0 || uncontrolable != 0) {
-  if (uncontrolable != 0) {
+  if (uncontrolable != 0)
+  {
     motor1.target = 0;
     motor2.target = 0;
     leg_position_add = 0;
@@ -282,35 +288,34 @@ void loop()
   motor1.move();
   motor2.move();
 
-  command.run();
-} // -----------------  void loop()
-
+  command.run(); 
+}
 // lqr自平衡控制
 void lqr_balance_loop()
 {
   // LQR_distance,LQR_speed,LQR_angle,LQR_gyro 通过编码器或者mpu实际测得
   // angle_zeropoint，distance_zeropoint 角度零点和位置零点（在理想平衡状态下俯仰角度和位移目标值），用于和实际值做差，得到控制
   // angle_control , gyro_control , distance_control , speed_control : lqr 控制参数
-  
+
   // LQR平衡算式，实际使用中为便于调参，讲算式分解为4个P控制，采用PIDController方法在commander中实时调试
-  // QR_u = LQR_k1*(LQR_angle - angle_zeropoint) 
-        // + LQR_k2*LQR_gyro 
-        // + LQR_k3*(LQR_distance - distance_zeropoint) 
-        // + LQR_k4*LQR_speed;
+  // QR_u = LQR_k1*(LQR_angle - angle_zeropoint)
+  // + LQR_k2*LQR_gyro
+  // + LQR_k3*(LQR_distance - distance_zeropoint)
+  // + LQR_k4*LQR_speed;
 
   // 给负值是因为按照当前的电机接线，正转矩会向后转
   // 编码器反馈shaft_angle，计算电机转轴角度平均数
-  LQR_distance = (-0.5) * (motor1.shaft_angle + motor2.shaft_angle); 
+  LQR_distance = (-0.5) * (motor1.shaft_angle + motor2.shaft_angle);
   // 编码器反馈实时角速度，计算电机转速平均数
-  LQR_speed = (-0.5) * (motor1.shaft_velocity + motor2.shaft_velocity); 
+  LQR_speed = (-0.5) * (motor1.shaft_velocity + motor2.shaft_velocity);
   LQR_angle = (float)mpu6050.getAngleY(); // pitch 角度，向前倒正数，向后倒负数
-  LQR_gyro = (float)mpu6050.getGyroY(); // pitch 角速度
+  LQR_gyro = (float)mpu6050.getGyroY();   // pitch 角速度
   // Serial.println(LQR_distance);
 
   // 计算pitch的角度和角速度的pid控制值
   // 实际pitch角度与零点的差值，目标值是零
   // 计算角度误差，并通过 PID 控制器得到角度控制量
-  angle_control = pid_angle(LQR_angle - angle_zeropoint); 
+  angle_control = pid_angle(LQR_angle - angle_zeropoint);
   // 实际pitch 角速度与目标值的差值，目标值是零
   // 通过 PID 控制器对角速度进行处理，得到角速度控制量
   gyro_control = pid_gyro(LQR_gyro);
@@ -352,7 +357,7 @@ void lqr_balance_loop()
   // 计算pitch的角度和角速度的pid控制值
   // 电机转轴角度平均数(上面计算)-位移零点=实际位移与零点的差值, 目标值是零
   // 计算位移误差，并通过位移 PID 控制器得到位移控制量
-  distance_control = pid_distance(LQR_distance - distance_zeropoint); 
+  distance_control = pid_distance(LQR_distance - distance_zeropoint);
   // 电机转速平均数(上面计算)-速度目标值=实际转速与目标值的差值, 目标值是零
   // 计算速度误差（实际速度减去经过低通滤波和缩放后的遥控器期望速度），并通过速度 PID 控制器得到速度控制量
   speed_control = pid_speed(LQR_speed - 0.1 * lpf_joyy(wrobot.joyy));
@@ -362,7 +367,7 @@ void lqr_balance_loop()
   robot_speed = LQR_speed;
   // 若轮部角速度、角加速度过大或处于跳跃后的恢复时期，认为出现轮部离地现象，需要特殊处理
   // 轮部离地情况下，对轮部分量不输出；反之，正常状态下完整输出平衡转矩
-  if (abs(robot_speed - robot_speed_last) > 10 || abs(robot_speed) > 50 || (jump_flag != 0)) 
+  if (abs(robot_speed - robot_speed_last) > 10 || abs(robot_speed) > 50 || (jump_flag != 0))
   {
     distance_zeropoint = LQR_distance;    // 位移零点重置
     LQR_u = angle_control + gyro_control; // 轮部离地情况下，对轮部分量不输出；反之，正常状态下完整输出平衡转矩
@@ -373,7 +378,6 @@ void lqr_balance_loop()
     // 当轮部未离地时，LQR_u 包含:角度控制量、角速度控制量、位移控制量和速度控制量，以实现完整的自平衡控制
     LQR_u = angle_control + gyro_control + distance_control + speed_control;
     // 计算得到LQR_u在loop()函数中在几个子loop执行完，被motor1执行
-    
   }
 
   // 触发条件：遥控器无信号输入、轮部位移控制正常介入、不处于跳跃后的恢复时期
@@ -407,90 +411,103 @@ void lqr_balance_loop()
   {
     pid_speed.P = 0.5;
   }
-  
 }
 
 // 腿部动作控制（舵机）
-void leg_loop() {
-    jump_loop();  // 首先调用jump_loop
-    
-    // 不处于跳跃状态时才执行
-    if (jump_flag == 0) {
-        // 基础变量声明
-        int left_height, right_height;
-        float RollOffset = 25;  // 增加基础高度偏移（原来是18）
-        
-        // 舵机基础参数设置
-        ACC[0] = 8;
-        ACC[1] = 8;
-        Speed[0] = 200;
-        Speed[1] = 200;
+void leg_loop()
+{
+  jump_loop(); // 首先调用jump_loop
 
-        // 获取roll角度和角速度
-        float roll_angle = (float)mpu6050.getAngleX() + 2.0;
-        float roll_velocity = (float)mpu6050.getGyroX();
-        leg_position_add = pid_roll_angle(lpf_roll(roll_angle));
+  // 不处于跳跃状态时才执行
+  if (jump_flag == 0)
+  {
+    // 基础变量声明
+    int left_height, right_height;
+    float RollOffset = 25; // 增加基础高度偏移（原来是18）
 
-        // 获取roll偏移量
-        int roll_offset = wrobot.roll;
-        
-        // 计算高度调整
-        float angleRad = abs(roll_offset) * (pi / 180.0);
-        float height_factor = 1.0;  // 默认高度因子
-        
-        // 根据roll_offset大小调整高度因子
-        if (abs(roll_offset) > 20) {
-            height_factor = 1.2;  // 大角度时增加效果
-        }
-        
-        // 计算高度调整量
-        float heightAdjust = 45 * height_factor * sin(angleRad);  // 基础45mm高度差
-        
-        // 添加动态补偿
-        float dynamic_compensation = 0;
-        if (abs(roll_velocity) > 5.0) {
-            dynamic_compensation = roll_velocity * 0.5;
-        }
+    // 舵机基础参数设置
+    ACC[0] = 8;
+    ACC[1] = 8;
+    Speed[0] = 200;
+    Speed[1] = 200;
 
-        // 根据roll_offset计算左右腿高度
-        if (roll_offset > 10) {
-            // 向右倾斜
-            left_height = wrobot.height + RollOffset + heightAdjust + dynamic_compensation;
-            right_height = wrobot.height + RollOffset - heightAdjust - dynamic_compensation;
-            leg_position_add = 0;
-        } else if (roll_offset < -10) {
-            // 向左倾斜
-            left_height = wrobot.height + RollOffset - heightAdjust + dynamic_compensation;
-            right_height = wrobot.height + RollOffset + heightAdjust - dynamic_compensation;
-            leg_position_add = 0;
-        } else {
-            // 保持平衡
-            left_height = wrobot.height;
-            right_height = wrobot.height;
-        }
+    // 获取roll角度和角速度
+    float roll_angle = (float)mpu6050.getAngleX() + 2.0;
+    float roll_velocity = (float)mpu6050.getGyroX();
+    leg_position_add = pid_roll_angle(lpf_roll(roll_angle));
 
-        // 安全限制：最大高度差
-        float max_height_diff = 60;
-        if (abs(left_height - right_height) > max_height_diff) {
-            float scale = max_height_diff / abs(left_height - right_height);
-            float height_diff = (left_height - right_height) * scale;
-            left_height = wrobot.height + height_diff/2;
-            right_height = wrobot.height - height_diff/2;
-        }
+    // 获取roll偏移量
+    int roll_offset = wrobot.roll;
 
-        // 计算舵机位置
-        Position[0] = 2048 + 12 + 9.5 * (left_height - 32) - leg_position_add;
-        Position[1] = 2048 - 12 - 9.5 * (right_height - 32) - leg_position_add;
+    // 计算高度调整
+    float angleRad = abs(roll_offset) * (pi / 180.0);
+    float height_factor = 1.0; // 默认高度因子
 
-        // 舵机位置限制
-        if (Position[0] < 2090) Position[0] = 2090;
-        else if (Position[0] > 2530) Position[0] = 2530;
-        if (Position[1] < 1566) Position[1] = 1566;
-        else if (Position[1] > 2006) Position[1] = 2006;
-
-        // 执行舵机控制
-        sms_sts.SyncWritePosEx(ID, 2, Position, Speed, ACC);
+    // 根据roll_offset大小调整高度因子
+    if (abs(roll_offset) > 20)
+    {
+      height_factor = 1.2; // 大角度时增加效果
     }
+
+    // 计算高度调整量
+    float heightAdjust = 45 * height_factor * sin(angleRad); // 基础45mm高度差
+
+    // 添加动态补偿
+    float dynamic_compensation = 0;
+    if (abs(roll_velocity) > 5.0)
+    {
+      dynamic_compensation = roll_velocity * 0.5;
+    }
+
+    // 根据roll_offset计算左右腿高度
+    if (roll_offset > 10)
+    {
+      // 向右倾斜
+      left_height = wrobot.height + RollOffset + heightAdjust + dynamic_compensation;
+      right_height = wrobot.height + RollOffset - heightAdjust - dynamic_compensation;
+      leg_position_add = 0;
+    }
+    else if (roll_offset < -10)
+    {
+      // 向左倾斜
+      left_height = wrobot.height + RollOffset - heightAdjust + dynamic_compensation;
+      right_height = wrobot.height + RollOffset + heightAdjust - dynamic_compensation;
+      leg_position_add = 0;
+    }
+    else
+    {
+      // 保持平衡
+      left_height = wrobot.height;
+      right_height = wrobot.height;
+    }
+
+    // 安全限制：最大高度差
+    float max_height_diff = 60;
+    if (abs(left_height - right_height) > max_height_diff)
+    {
+      float scale = max_height_diff / abs(left_height - right_height);
+      float height_diff = (left_height - right_height) * scale;
+      left_height = wrobot.height + height_diff / 2;
+      right_height = wrobot.height - height_diff / 2;
+    }
+
+    // 计算舵机位置
+    Position[0] = 2048 + 12 + 9.5 * (left_height - 32) - leg_position_add;
+    Position[1] = 2048 - 12 - 9.5 * (right_height - 32) - leg_position_add;
+
+    // 舵机位置限制
+    if (Position[0] < 2090)
+      Position[0] = 2090;
+    else if (Position[0] > 2530)
+      Position[0] = 2530;
+    if (Position[1] < 1566)
+      Position[1] = 1566;
+    else if (Position[1] > 2006)
+      Position[1] = 2006;
+
+    // 执行舵机控制
+    sms_sts.SyncWritePosEx(ID, 2, Position, Speed, ACC);
+  }
 }
 
 // 跳跃控制
@@ -525,8 +542,8 @@ void jump_loop()
     }
     if (jump_flag > 200)
     {
-      jump_flag = 0; // 跳跃过程结束
-      wrobot.height = 38;  // 恢复默认高度值
+      jump_flag = 0;      // 跳跃过程结束
+      wrobot.height = 38; // 恢复默认高度值
     }
   }
 }
@@ -659,83 +676,84 @@ void bat_check()
 // 摇摆模式控制函数
 void sway_loop()
 {
-    // Check button trigger condition: state changes from other to SWAY
-    if ((wrobot.dir_last != 6) && (wrobot.dir == 6) && (sway_flag == 0))
-    {
-        // Initialize sway parameters
-        sway_flag = 1;
-        sway_count = 0;
-        sway_cycle = 0;
-        sway_direction = 1;
-        sway_timer = millis();
-        
-        // Set servo parameters
-        ACC[0] = 10;       // Moderate acceleration to reduce impact
-        ACC[1] = 10;
-        Speed[0] = 250;    // Moderate speed for stability
-        Speed[1] = 250;
+  // Check button trigger condition: state changes from other to SWAY
+  if ((wrobot.dir_last != 6) && (wrobot.dir == 6) && (sway_flag == 0))
+  {
+    // Initialize sway parameters
+    sway_flag = 1;
+    sway_count = 0;
+    sway_cycle = 0;
+    sway_direction = 1;
+    sway_timer = millis();
 
-        // Set initial height to default
-        wrobot.height = 38;  // Use default height for stability
-    }
+    // Set servo parameters
+    ACC[0] = 10; // Moderate acceleration to reduce impact
+    ACC[1] = 10;
+    Speed[0] = 250; // Moderate speed for stability
+    Speed[1] = 250;
 
-    // Execute sway motion
-    if (sway_flag > 0)
+    // Set initial height to default
+    wrobot.height = 38; // Use default height for stability
+  }
+
+  // Execute sway motion
+  if (sway_flag > 0)
+  {
+    unsigned long current_time = millis();
+
+    // Switch direction every 1200ms to allow time for large amplitude motion
+    if (current_time - sway_timer >= 1200)
     {
-        unsigned long current_time = millis();
-        
-        // Switch direction every 1200ms to allow time for large amplitude motion
-        if (current_time - sway_timer >= 1200)
+      sway_direction = -sway_direction;
+      sway_count++;
+      sway_timer = current_time;
+
+      // Complete one full cycle after 4 direction changes (2 left and 2 right)
+      if (sway_count % 4 == 0)
+      {
+        sway_cycle++;
+
+        // Stop after 5 complete cycles (20 total sways)
+        if (sway_cycle >= 5)
         {
-            sway_direction = -sway_direction;
-            sway_count++;
-            sway_timer = current_time;
-            
-            // Complete one full cycle after 4 direction changes (2 left and 2 right)
-            if (sway_count % 4 == 0)
-            {
-                sway_cycle++;
-                
-                // Stop after 5 complete cycles (20 total sways)
-                if (sway_cycle >= 5)
-                {
-                    // Reset all flags and states
-                    sway_flag = 0;
-                    sway_count = 0;
-                    sway_cycle = 0;
-                    wrobot.roll = 0;     // Restore balance position
-                    wrobot.height = 38;   // Restore default height
-                    wrobot.dir = 4;       // Switch to STOP state
-                    return;
-                }
-            }
+          // Reset all flags and states
+          sway_flag = 0;
+          sway_count = 0;
+          sway_cycle = 0;
+          wrobot.roll = 0;    // Restore balance position
+          wrobot.height = 38; // Restore default height
+          wrobot.dir = 4;     // Switch to STOP state
+          return;
         }
-        
-        // Calculate sway angle and height adjustment
-        float time_ratio = (float)(current_time - sway_timer) / 1200.0f;
-        float phase = time_ratio * PI;
-        
-        // Set sway angle (45 degrees)
-        float target_angle = sway_direction * 45;
-        float smooth_angle = target_angle * sin(phase);
-        wrobot.roll = (int)smooth_angle;
-
-        // Height adjustment logic
-        // Use smaller height range and ensure safety height
-        const int BASE_HEIGHT = 38;      // Base height
-        const int MIN_HEIGHT = 32;       // Minimum safe height
-        const int HEIGHT_RANGE = 6;      // Height variation range (±3mm)
-        
-        // Calculate height adjustment using cosine function, range from -3 to +3
-        float height_adjust = (HEIGHT_RANGE/2) * cos(phase);
-        
-        // Calculate new height, ensuring it doesn't go below minimum safe height
-        int new_height = BASE_HEIGHT + (int)height_adjust;
-        if (new_height < MIN_HEIGHT) {
-            new_height = MIN_HEIGHT;
-        }
-        
-        // Apply new height
-        wrobot.height = new_height;
+      }
     }
+
+    // Calculate sway angle and height adjustment
+    float time_ratio = (float)(current_time - sway_timer) / 1200.0f;
+    float phase = time_ratio * PI;
+
+    // Set sway angle (45 degrees)
+    float target_angle = sway_direction * 45;
+    float smooth_angle = target_angle * sin(phase);
+    wrobot.roll = (int)smooth_angle;
+
+    // Height adjustment logic
+    // Use smaller height range and ensure safety height
+    const int BASE_HEIGHT = 38; // Base height
+    const int MIN_HEIGHT = 32;  // Minimum safe height
+    const int HEIGHT_RANGE = 6; // Height variation range (±3mm)
+
+    // Calculate height adjustment using cosine function, range from -3 to +3
+    float height_adjust = (HEIGHT_RANGE / 2) * cos(phase);
+
+    // Calculate new height, ensuring it doesn't go below minimum safe height
+    int new_height = BASE_HEIGHT + (int)height_adjust;
+    if (new_height < MIN_HEIGHT)
+    {
+      new_height = MIN_HEIGHT;
+    }
+
+    // Apply new height
+    wrobot.height = new_height;
+  }
 }

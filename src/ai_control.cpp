@@ -2,7 +2,7 @@
 #include "main.h" // 包含主头文件以访问wrobot结构体
 
   
-// 删除所有AISerial相关定义
+// 删除所有AISerial相关定义 # 发送AI控制命令 #SPEED:0.5
 void handleAICommands() {
   static String aiBuffer;
   while(Serial.available()) {
